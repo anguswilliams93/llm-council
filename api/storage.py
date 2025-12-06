@@ -88,6 +88,28 @@ async def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
     await conn.release()
 
 
+async def list_conversations(include_archived: bool = False) -> List[Dict[str, Any]]:
+  conn = await ensure_pool().acquire()
+  try:
+    rows = await conn.fetch(
+      'SELECT id, created_at, title, COUNT(m.id) as message_count, archived \
+       FROM conversations c LEFT JOIN messages m ON c.id = m.conversation_id \
+       WHERE ($1 OR NOT archived) GROUP BY c.id ORDER BY created_at DESC',
+      include_archived
+    )
+    return [
+      {
+        'id': str(row['id']),
+        'created_at': row['created_at'].isoformat(),
+        'title': row['title'],
+        'message_count': row['message_count'],
+        'archived': row['archived']
+      } for row in rows
+    ]
+  finally:
+    await conn.release()
+
+
 def save_conversation(conversation: Dict[str, Any]):
     """
     Save a conversation to storage.
@@ -102,133 +124,77 @@ def save_conversation(conversation: Dict[str, Any]):
         json.dump(conversation, f, indent=2)
 
 
-def list_conversations(include_archived: bool = False) -> List[Dict[str, Any]]:
-    """
-    List all conversations (metadata only).
-
-    Args:
-        include_archived: If True, include archived conversations
-
-    Returns:
-        List of conversation metadata dicts
-    """
-    ensure_data_dir()
-
-    conversations = []
-    for filename in os.listdir(DATA_DIR):
-        if filename.endswith('.json'):
-            path = os.path.join(DATA_DIR, filename)
-            with open(path, 'r') as f:
-                data = json.load(f)
-                # Skip archived unless requested
-                if not include_archived and data.get("archived", False):
-                    continue
-                # Return metadata only
-                conversations.append({
-                    "id": data["id"],
-                    "created_at": data["created_at"],
-                    "title": data.get("title", "New Conversation"),
-                    "message_count": len(data["messages"]),
-                    "archived": data.get("archived", False)
-                })
-
-    # Sort by creation time, newest first
-    conversations.sort(key=lambda x: x["created_at"], reverse=True)
-
-    return conversations
+async def save_conversation(conversation: Dict[str, Any]):
+  conn = await ensure_pool().acquire()
+  try:
+    await conn.execute('DELETE FROM messages WHERE conversation_id = $1', uuid.UUID(conversation['id']))
+    for msg in conversation['messages']:
+      await conn.execute(
+        'INSERT INTO messages (conversation_id, role, content, stage1, stage2, stage3, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        uuid.UUID(conversation['id']),
+        msg['role'],
+        msg.get('content'),
+        msg.get('stage1'),
+        msg.get('stage2'),
+        msg.get('stage3'),
+        datetime.fromisoformat(msg.get('timestamp', datetime.utcnow().isoformat()))
+      )
+  finally:
+    await conn.release()
 
 
-def add_user_message(conversation_id: str, content: str):
-    """
-    Add a user message to a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-        content: User message content
-    """
-    conversation = get_conversation(conversation_id)
-    if conversation is None:
-        raise ValueError(f"Conversation {conversation_id} not found")
-
-    conversation["messages"].append({
-        "role": "user",
-        "content": content
-    })
-
-    save_conversation(conversation)
+async def add_user_message(conversation_id: str, content: str):
+  conn = await ensure_pool().acquire()
+  try:
+    await conn.execute(
+      'INSERT INTO messages (conversation_id, role, content, timestamp) VALUES ($1, $2, $3, NOW())',
+      uuid.UUID(conversation_id),
+      'user',
+      content
+    )
+    await conn.execute('UPDATE conversations SET message_count = message_count + 1 WHERE id = $1', uuid.UUID(conversation_id))
+  finally:
+    await conn.release()
 
 
-def add_assistant_message(
-    conversation_id: str,
-    stage1: List[Dict[str, Any]],
-    stage2: List[Dict[str, Any]],
-    stage3: Dict[str, Any]
-):
-    """
-    Add an assistant message with all 3 stages to a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-        stage1: List of individual model responses
-        stage2: List of model rankings
-        stage3: Final synthesized response
-    """
-    conversation = get_conversation(conversation_id)
-    if conversation is None:
-        raise ValueError(f"Conversation {conversation_id} not found")
-
-    conversation["messages"].append({
-        "role": "assistant",
-        "stage1": stage1,
-        "stage2": stage2,
-        "stage3": stage3
-    })
-
-    save_conversation(conversation)
+async def add_assistant_message(conversation_id: str, stage1: List[Dict], stage2: List[Dict], stage3: Dict):
+  conn = await ensure_pool().acquire()
+  try:
+    await conn.execute(
+      'INSERT INTO messages (conversation_id, role, stage1, stage2, stage3, timestamp) VALUES ($1, $2, $3, $4, $5, NOW())',
+      uuid.UUID(conversation_id),
+      'assistant',
+      json.dumps(stage1),
+      json.dumps(stage2),
+      json.dumps(stage3)
+    )
+    await conn.execute('UPDATE conversations SET message_count = message_count + 1 WHERE id = $1', uuid.UUID(conversation_id))
+  finally:
+    await conn.release()
 
 
-def update_conversation_title(conversation_id: str, title: str):
-    """
-    Update the title of a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-        title: New title for the conversation
-    """
-    conversation = get_conversation(conversation_id)
-    if conversation is None:
-        raise ValueError(f"Conversation {conversation_id} not found")
-
-    conversation["title"] = title
-    save_conversation(conversation)
+async def update_conversation_title(conversation_id: str, title: str):
+  conn = await ensure_pool().acquire()
+  try:
+    await conn.execute('UPDATE conversations SET title = $1 WHERE id = $2', title, uuid.UUID(conversation_id))
+  finally:
+    await conn.release()
 
 
-def archive_conversation(conversation_id: str, archived: bool = True):
-    """
-    Archive or unarchive a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-        archived: True to archive, False to unarchive
-    """
-    conversation = get_conversation(conversation_id)
-    if conversation is None:
-        raise ValueError(f"Conversation {conversation_id} not found")
-
-    conversation["archived"] = archived
-    save_conversation(conversation)
+async def archive_conversation(conversation_id: str, archived: bool = True):
+  conn = await ensure_pool().acquire()
+  try:
+    await conn.execute('UPDATE conversations SET archived = $1 WHERE id = $2', archived, uuid.UUID(conversation_id))
+  finally:
+    await conn.release()
 
 
-def delete_conversation(conversation_id: str):
-    """
-    Permanently delete a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-    """
-    path = get_conversation_path(conversation_id)
-    if os.path.exists(path):
-        os.remove(path)
+async def delete_conversation(conversation_id: str):
+  conn = await ensure_pool().acquire()
+  try:
+    await conn.execute('DELETE FROM conversations WHERE id = $1', uuid.UUID(conversation_id))
+  finally:
+    await conn.release()
 
 
 def get_overall_scores() -> Dict[str, Any]:

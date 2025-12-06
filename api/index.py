@@ -8,6 +8,7 @@ from typing import List, Dict, Any
 import uuid
 import json
 import asyncio
+import os
 
 from . import storage
 from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
@@ -229,5 +230,6 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
 
 # At end
 if __name__ == "__main__":
-  import uvicorn
-  uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 3000)))
+    import uvicorn
+    port = int(os.getenv("PORT", 3000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
