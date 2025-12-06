@@ -2,7 +2,8 @@
  * API client for communicating with the LLM Council backend
  */
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").replace(/\/+$/, '');
+// Use relative paths for Next.js API routes (same-origin)
+const API_BASE = "";
 
 // Import types from the central types file
 import type {
@@ -83,7 +84,7 @@ export interface OverallScores {
  */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/`);
+    const response = await fetch(`${API_BASE}/api`);
     const data = await response.json();
     return data.status === "ok";
   } catch {

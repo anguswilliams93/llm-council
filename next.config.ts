@@ -1,10 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  transpilePackages: ['motion'],
   experimental: {
-    serverComponentsExternalPackages: ['motion/react'],
+    optimizePackageImports: ['motion'],
   },
-  output: 'standalone',  // No static prerender
 };
 
 export default nextConfig;

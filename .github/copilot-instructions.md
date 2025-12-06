@@ -6,26 +6,27 @@ This is **ParLLMent**, a 3-stage deliberation system where multiple LLMs collabo
 
 ## Tech Stack
 
-- **Backend**: Python 3, FastAPI, asyncio
-- **Frontend**:  Next.JS 16, Shadcn Studio, Motion-dev.
+- **Full Stack**: Next.js 16 with TypeScript API routes
+- **Frontend**: Shadcn Studio, Motion-dev, Tailwind CSS
 - **API**: OpenRouter for LLM access
-- **Storage**: JSON files in `data/conversations/`
+- **Storage**: Vercel Postgres
+- **Deployment**: Vercel
 
 ## Code Style & Conventions
 
-### Python (Backend)
+### TypeScript (API Routes)
 
-- Use **relative imports** in all backend modules: `from .config import ...`
+- Use Next.js App Router API routes in `app/api/`
 - Use `async/await` for all API calls and I/O operations
-- Use `asyncio.gather()` for parallel operations
-- Follow graceful degradation: return `None` on failure, continue with successful responses
+- Use `Promise.all()` for parallel operations
+- Follow graceful degradation: return `null` on failure, continue with successful responses
 - Never fail entire requests due to single model failure
 
-### JavaScript/React (Frontend)
+### TypeScript/React (Frontend)
 
 - Use functional components with hooks
 - Wrap all ReactMarkdown output in `<div className="markdown-content">`
-- Use CSS modules pattern (component-specific `.css` files)
+- Use Tailwind CSS for styling
 - Primary color: `#4a90e2` (blue), light mode theme
 - Stage 3 uses green-tinted background: `#f0fff0`
 
@@ -48,45 +49,52 @@ This is **ParLLMent**, a 3-stage deliberation system where multiple LLMs collabo
 
 ## Architecture Rules
 
-### Backend Structure
+### Project Structure
 
 ```
-backend/
-├── config.py      # COUNCIL_MODELS, CHAIRMAN_MODEL, env vars
-├── openrouter.py  # query_model(), query_models_parallel()
-├── council.py     # stage1/2/3 functions, ranking parsing
-├── storage.py     # JSON conversation persistence
-└── main.py        # FastAPI app, CORS, endpoints
-```
-
-### Frontend Structure
-
-```
-frontend/src/
-├── App.jsx              # Main orchestration
-├── api.js               # Backend API calls
-└── components/
-    ├── ChatInterface.jsx  # Input textarea
-    ├── Stage1.jsx         # Individual responses (tabs)
-    ├── Stage2.jsx         # Rankings + de-anonymization
-    └── Stage3.jsx         # Final synthesis
+frontend/
+├── app/
+│   ├── api/                    # Next.js API routes
+│   │   ├── route.ts            # Health check
+│   │   ├── scores/route.ts     # Leaderboard scores
+│   │   └── conversations/
+│   │       ├── route.ts        # List/Create conversations
+│   │       └── [id]/
+│   │           ├── route.ts    # Get/Delete conversation
+│   │           ├── archive/route.ts
+│   │           └── message/
+│   │               ├── route.ts      # Non-streaming
+│   │               └── stream/route.ts # SSE streaming
+│   ├── page.tsx                # Main chat page
+│   ├── scores/page.tsx         # Leaderboard page
+│   └── layout.tsx
+├── components/                 # React components
+├── lib/
+│   ├── config.ts              # COUNCIL_MODELS, CHAIRMAN_MODEL
+│   ├── openrouter.ts          # queryModel(), queryModelsParallel()
+│   ├── council.ts             # stage1/2/3 functions, ranking parsing
+│   ├── storage.ts             # Postgres persistence
+│   ├── api.ts                 # Frontend API client
+│   ├── types.ts               # TypeScript types
+│   └── utils.ts
+└── package.json
 ```
 
 ## Critical Implementation Details
 
-### Running the Backend
+### Running the App
 
-Always run from project root:
+From the `frontend` directory:
 ```bash
-python -m backend.main
+npm run dev
 ```
-Never run from the backend directory or use `python backend/main.py`.
+The app runs on port 3000 by default.
 
-### Port Configuration
+### Environment Variables
 
-- Backend: **8001** (not 8000)
-- Frontend: **5173** (Vite default)
-- If changing ports, update both `backend/main.py` and `frontend/src/api.js`
+Required in `.env.local` (local) or Vercel dashboard (production):
+- `OPENROUTER_API_KEY` - OpenRouter API key
+- `POSTGRES_URL` - Vercel Postgres connection string
 
 ### Stage 2 Ranking Format
 
@@ -99,7 +107,7 @@ When modifying Stage 2 prompts, maintain this strict format:
 ### De-anonymization
 
 - Models receive anonymous labels: "Response A", "Response B", etc.
-- Backend creates `label_to_model` mapping
+- API creates `label_to_model` mapping
 - Frontend displays de-anonymized names in **bold** for readability
 - De-anonymization happens client-side only
 
@@ -113,42 +121,29 @@ When modifying Stage 2 prompts, maintain this strict format:
 
 ### Adding a New Council Model
 
-Edit `backend/config.py`:
-```python
-COUNCIL_MODELS = [
-    "openai/gpt-4o",
-    "anthropic/claude-3.5-sonnet",
-    # Add new model here
-]
+Edit `frontend/lib/config.ts`:
+```typescript
+export const COUNCIL_MODELS = [
+  "openai/gpt-4o",
+  "anthropic/claude-3.5-sonnet",
+  // Add new model here
+];
 ```
-
-### Creating New Stage Components
-
-1. Create `Stage{N}.jsx` and `Stage{N}.css` in `frontend/src/components/`
-2. Wrap markdown content: `<div className="markdown-content">`
-3. Import and add to `ChatInterface.jsx`
 
 ### API Error Handling
 
-```python
-# Backend pattern
-result = await query_model(...)
-if result is None:
-    # Log but continue with other responses
-    continue
+```typescript
+// API route pattern
+const result = await queryModel(...);
+if (result === null) {
+  // Log but continue with other responses
+  continue;
+}
 ```
-
-## Testing
-
-Use `test_openrouter.py` to verify API connectivity before adding new models.
 
 ## Do NOT
 
-- Use absolute imports in backend modules
-- Always stop the current servers before restarting.
-- When starting the servers, run start.sh in bash terminal from the project root.
-- Run backend directly with `python backend/main.py`
 - Use dark mode styling (project uses light mode)
-- Persist metadata to JSON storage
+- Persist metadata to database storage
 - Fail entire requests when single models fail
 - Add text after the FINAL RANKING section in Stage 2 prompts

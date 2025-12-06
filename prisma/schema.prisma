@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Conversation {
+  id         String    @id @default(uuid()) @db.Uuid
+  created_at DateTime  @default(now())
+  title      String    @default("New Conversation")
+  archived   Boolean   @default(false)
+  messages   Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id              String       @id @default(uuid()) @db.Uuid
+  conversation_id String       @db.Uuid
+  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  role            String
+  content         String?
+  stage1          Json?
+  stage2          Json?
+  stage3          Json?
+  timestamp       DateTime     @default(now())
+
+  @@map("messages")
+}

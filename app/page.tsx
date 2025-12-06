@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = 'force-dynamic';
+
 import * as React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, RefreshCw, X } from "lucide-react";
@@ -329,14 +331,10 @@ export default function HomePage() {
               <AlertCircle className="h-8 w-8 text-destructive" />
             </div>
           </div>
-          <h2 className="text-2xl font-semibold">Backend Unavailable</h2>
+          <h2 className="text-2xl font-semibold">API Unavailable</h2>
           <p className="text-muted-foreground">
-            Cannot connect to the parLLMent backend. Please make sure the server
-            is running on port 8001.
+            Cannot connect to the parLLMent API. Please try refreshing the page.
           </p>
-          <code className="block bg-muted p-2 rounded text-sm">
-            python -m backend.main
-          </code>
           <Button
             onClick={() => window.location.reload()}
             variant="outline"
