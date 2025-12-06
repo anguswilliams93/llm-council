@@ -2,7 +2,7 @@
  * API client for communicating with the LLM Council backend
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").replace(/\/+$/, '');
 
 // Import types from the central types file
 import type {

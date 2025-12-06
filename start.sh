@@ -5,19 +5,19 @@
 echo "Starting LLM Council..."
 echo ""
 
-# Start backend
-echo "Starting backend on http://localhost:8001..."
-uv run python -m backend.main &
-BACKEND_PID=$!
+# Build for Vercel deployment (frontend only - backend needs separate host like Render)
+echo "Installing backend dependencies..."
+pip install -r backend/requirements.txt
 
-# Wait a bit for backend to start
-sleep 2
-
-# Start frontend
-echo "Starting frontend on http://localhost:5173..."
+echo "Building frontend for Vercel..."
 cd frontend
-npm run dev &
-FRONTEND_PID=$!
+npm ci
+npm run build
+
+echo "Build complete. Deploy frontend to Vercel with 'vercel --prod'."
+echo "Backend must be deployed separately (Render/Heroku) as Vercel doesn't support persistent Python servers."
+echo "Set NEXT_PUBLIC_API_URL to your backend URL in Vercel env vars."
+
 
 echo ""
 echo "✓ LLM Council is running!"
