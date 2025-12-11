@@ -10,6 +10,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { ConversationSidebar } from "@/components/conversation-sidebar";
 import { ChatPanel } from "@/components/chat-panel";
+import { UserProfileDialog, type AuthUser } from "@/components/user-profile-dialog";
 import * as api from "@/lib/api";
 import type {
   ConversationMetadata,
@@ -21,6 +22,9 @@ import type {
 } from "@/lib/types";
 
 export default function HomePage() {
+  // User state
+  const [currentUser, setCurrentUser] = React.useState<AuthUser | null>(null);
+
   // Conversation state
   const [conversations, setConversations] = React.useState<
     ConversationMetadata[]
@@ -63,12 +67,13 @@ export default function HomePage() {
     checkHealth();
   }, []);
 
-  // Load conversations on mount and when showArchived changes
+  // Load conversations on mount and when showArchived or currentUser changes
   React.useEffect(() => {
     const loadConversations = async () => {
       try {
         setIsLoadingConversations(true);
-        const convs = await api.listConversations(showArchived);
+        // Pass userId for row-level security
+        const convs = await api.listConversations(showArchived, currentUser?.id);
         setConversations(convs);
         setError(null);
       } catch (err) {
@@ -81,7 +86,7 @@ export default function HomePage() {
     if (backendHealthy) {
       loadConversations();
     }
-  }, [backendHealthy, showArchived]);
+  }, [backendHealthy, showArchived, currentUser?.id]);
 
   // Load messages when active conversation changes
   React.useEffect(() => {
@@ -100,7 +105,8 @@ export default function HomePage() {
 
       try {
         setIsLoadingMessages(true);
-        const conversation = await api.getConversation(activeConversationId);
+        // Pass userId for row-level security
+        const conversation = await api.getConversation(activeConversationId, currentUser?.id);
         setMessages(conversation.messages);
         setError(null);
       } catch (err) {
@@ -111,12 +117,12 @@ export default function HomePage() {
       }
     };
     loadMessages();
-  }, [activeConversationId]);
+  }, [activeConversationId, currentUser?.id]);
 
   // Handle creating new conversation
   const handleNewConversation = async () => {
     try {
-      const conversation = await api.createConversation();
+      const conversation = await api.createConversation(currentUser?.id);
       setConversations((prev) => [
         {
           id: conversation.id,
@@ -144,7 +150,7 @@ export default function HomePage() {
   // Handle archiving/unarchiving conversation
   const handleArchiveConversation = async (id: string, archive: boolean) => {
     try {
-      await api.archiveConversation(id, archive);
+      await api.archiveConversation(id, archive, currentUser?.id);
       // Update local state
       setConversations((prev) =>
         prev.map((c) => (c.id === id ? { ...c, archived: archive } : c))
@@ -164,7 +170,7 @@ export default function HomePage() {
   // Handle deleting conversation
   const handleDeleteConversation = async (id: string) => {
     try {
-      await api.deleteConversation(id);
+      await api.deleteConversation(id, currentUser?.id);
       // Remove from local state
       setConversations((prev) => prev.filter((c) => c.id !== id));
       // If deleting the active conversation, clear selection
@@ -187,7 +193,7 @@ export default function HomePage() {
     let convId = activeConversationId;
     if (!convId) {
       try {
-        const conversation = await api.createConversation();
+        const conversation = await api.createConversation(currentUser?.id);
         convId = conversation.id;
         // Set the ref to skip the useEffect that loads messages
         skipLoadMessagesRef.current = true;
@@ -226,6 +232,12 @@ export default function HomePage() {
     setIsSending(true);
     setStage1Loading(true);
     setError(null);
+
+    // Build user model config if user is logged in
+    const userConfig = currentUser ? {
+      chairmanModel: currentUser.chairmanModel,
+      councilModels: currentUser.councilModels,
+    } : undefined;
 
     try {
       await api.sendMessageStream(convId, content, (event) => {
@@ -303,7 +315,7 @@ export default function HomePage() {
             setError(event.message || "An error occurred");
             break;
         }
-      });
+      }, userConfig);
     } catch (err) {
       setError("Failed to send message");
       console.error(err);
@@ -394,6 +406,7 @@ export default function HomePage() {
                 </h1>
               )}
             </div>
+            <UserProfileDialog onAuthChange={setCurrentUser} />
           </header>
 
           {/* Error Banner */}

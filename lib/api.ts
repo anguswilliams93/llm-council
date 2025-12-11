@@ -64,6 +64,7 @@ export interface StreamEvent {
 
 export interface ModelScore {
   model: string;
+  description?: string;
   total_points: number;
   rankings_received: number;
   first_places: number;
@@ -104,10 +105,14 @@ export async function getOverallScores(): Promise<OverallScores> {
 }
 
 /**
- * List all conversations
+ * List all conversations for a user
  */
-export async function listConversations(includeArchived: boolean = false): Promise<ConversationMetadata[]> {
-  const response = await fetch(`${API_BASE}/api/conversations?include_archived=${includeArchived}`);
+export async function listConversations(includeArchived: boolean = false, userId?: string): Promise<ConversationMetadata[]> {
+  let url = `${API_BASE}/api/conversations?include_archived=${includeArchived}`;
+  if (userId) {
+    url += `&userId=${encodeURIComponent(userId)}`;
+  }
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Failed to fetch conversations");
   }
@@ -117,11 +122,11 @@ export async function listConversations(includeArchived: boolean = false): Promi
 /**
  * Create a new conversation
  */
-export async function createConversation(): Promise<Conversation> {
+export async function createConversation(userId?: string): Promise<Conversation> {
   const response = await fetch(`${API_BASE}/api/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ userId }),
   });
   if (!response.ok) {
     throw new Error("Failed to create conversation");
@@ -132,8 +137,12 @@ export async function createConversation(): Promise<Conversation> {
 /**
  * Get a specific conversation
  */
-export async function getConversation(id: string): Promise<Conversation> {
-  const response = await fetch(`${API_BASE}/api/conversations/${id}`);
+export async function getConversation(id: string, userId?: string): Promise<Conversation> {
+  let url = `${API_BASE}/api/conversations/${id}`;
+  if (userId) {
+    url += `?userId=${encodeURIComponent(userId)}`;
+  }
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Failed to fetch conversation");
   }
@@ -143,11 +152,11 @@ export async function getConversation(id: string): Promise<Conversation> {
 /**
  * Archive or unarchive a conversation
  */
-export async function archiveConversation(id: string, archived: boolean = true): Promise<void> {
+export async function archiveConversation(id: string, archived: boolean = true, userId?: string): Promise<void> {
   const response = await fetch(`${API_BASE}/api/conversations/${id}/archive`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ archived }),
+    body: JSON.stringify({ archived, userId }),
   });
   if (!response.ok) {
     throw new Error("Failed to archive conversation");
@@ -157,8 +166,12 @@ export async function archiveConversation(id: string, archived: boolean = true):
 /**
  * Delete a conversation permanently
  */
-export async function deleteConversation(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/conversations/${id}`, {
+export async function deleteConversation(id: string, userId?: string): Promise<void> {
+  let url = `${API_BASE}/api/conversations/${id}`;
+  if (userId) {
+    url += `?userId=${encodeURIComponent(userId)}`;
+  }
+  const response = await fetch(url, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -167,18 +180,27 @@ export async function deleteConversation(id: string): Promise<void> {
 }
 
 /**
+ * User model configuration for custom council
+ */
+export interface UserModelConfig {
+  chairmanModel: string;
+  councilModels: string[];
+}
+
+/**
  * Send a message and get the council response (non-streaming)
  */
 export async function sendMessage(
   conversationId: string,
-  content: string
+  content: string,
+  userConfig?: UserModelConfig
 ): Promise<CouncilResponse> {
   const response = await fetch(
     `${API_BASE}/api/conversations/${conversationId}/message`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, userConfig }),
     }
   );
   if (!response.ok) {
@@ -193,14 +215,15 @@ export async function sendMessage(
 export async function sendMessageStream(
   conversationId: string,
   content: string,
-  onEvent: (event: StreamEvent) => void
+  onEvent: (event: StreamEvent) => void,
+  userConfig?: UserModelConfig
 ): Promise<void> {
   const response = await fetch(
     `${API_BASE}/api/conversations/${conversationId}/message/stream`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, userConfig }),
     }
   );
 

@@ -10,7 +10,7 @@ import {
   addAssistantMessage,
   updateConversationTitle,
 } from "@/lib/storage";
-import { runFullCouncil, generateConversationTitle } from "@/lib/council";
+import { runFullCouncil, generateConversationTitle, buildConversationHistory, type UserModelConfig } from "@/lib/council";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -21,6 +21,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const body = await request.json();
     const content = body.content;
+
+    // Optional user model configuration
+    const userConfig: UserModelConfig | undefined = body.userConfig;
 
     if (!content || typeof content !== "string") {
       return NextResponse.json(
@@ -41,6 +44,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Check if this is the first message
     const isFirstMessage = conversation.messages.length === 0;
 
+    // Build conversation history from previous messages for context
+    const conversationHistory = buildConversationHistory(conversation.messages);
+
     // Add user message
     await addUserMessage(id, content);
 
@@ -49,8 +55,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       ? generateConversationTitle(content)
       : Promise.resolve(null);
 
-    // Run the 3-stage council process
-    const { stage1, stage2, stage3, metadata } = await runFullCouncil(content);
+    // Run the 3-stage council process (with conversation history for context)
+    const { stage1, stage2, stage3, metadata } = await runFullCouncil(
+      content,
+      userConfig,
+      conversationHistory
+    );
 
     // Wait for title generation if it was started
     const title = await titlePromise;

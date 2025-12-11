@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getConversation, archiveConversation } from "@/lib/storage";
+import { archiveConversation } from "@/lib/storage";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -15,17 +15,18 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const body = await request.json();
     const archived = body.archived ?? true;
+    const userId = body.userId || undefined;
 
-    const conversation = await getConversation(id);
+    // Pass userId for row-level security - archiveConversation returns success status
+    const success = await archiveConversation(id, archived, userId);
 
-    if (!conversation) {
+    if (!success) {
       return NextResponse.json(
-        { error: "Conversation not found" },
+        { error: "Conversation not found or access denied" },
         { status: 404 }
       );
     }
 
-    await archiveConversation(id, archived);
     return NextResponse.json({ status: "ok", archived });
   } catch (error) {
     console.error("Error archiving conversation:", error);

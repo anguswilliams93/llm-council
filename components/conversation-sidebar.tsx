@@ -4,6 +4,7 @@ import * as React from "react";
 import { Plus, MessageSquare, Archive, ArchiveRestore, Trash2, MoreHorizontal, Trophy } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Link from "next/link";
+import Image from "next/image";
 
 import {
   Sidebar,
@@ -165,9 +166,13 @@ export function ConversationSidebar({
     <Sidebar className="border-r">
       <SidebarHeader className="p-4 border-b">
         <div className="flex items-center gap-2 mb-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <MessageSquare className="h-4 w-4" />
-          </div>
+          <Image
+            src="/council-logo.svg"
+            alt="Council Logo"
+            width={32}
+            height={32}
+            className="dark:invert"
+          />
           <div className="flex flex-col">
             <span className="text-sm font-semibold">parLLMent</span>
             <span className="text-xs text-muted-foreground">LLM Council</span>

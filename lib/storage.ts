@@ -23,6 +23,7 @@ function generateUUID(): string {
 
 export interface ModelScore {
   model: string;
+  description?: string;
   total_points: number;
   rankings_received: number;
   first_places: number;
@@ -40,9 +41,12 @@ export interface OverallScores {
 
 /**
  * Create a new conversation.
+ * @param conversationId - Optional specific ID
+ * @param userId - Optional user ID for row-level security
  */
 export async function createConversation(
-  conversationId?: string
+  conversationId?: string,
+  userId?: string
 ): Promise<Conversation> {
   const id = conversationId || generateUUID();
 
@@ -51,6 +55,7 @@ export async function createConversation(
       id,
       title: "New Conversation",
       archived: false,
+      user_id: userId || null,
     },
   });
 
@@ -64,12 +69,23 @@ export async function createConversation(
 
 /**
  * Get a conversation with all its messages.
+ * @param conversationId - Conversation ID
+ * @param userId - Optional user ID for row-level security
  */
 export async function getConversation(
-  conversationId: string
+  conversationId: string,
+  userId?: string
 ): Promise<Conversation | null> {
-  const conv = await prisma.conversation.findUnique({
-    where: { id: conversationId },
+  const whereClause: { id: string; user_id?: string | null } = { id: conversationId };
+
+  // If userId provided, ensure user owns the conversation
+  // If userId is undefined, we allow access (for backward compatibility with guest users)
+  if (userId !== undefined) {
+    whereClause.user_id = userId;
+  }
+
+  const conv = await prisma.conversation.findFirst({
+    where: whereClause,
     include: {
       messages: {
         orderBy: { timestamp: "asc" },
@@ -109,12 +125,26 @@ export async function getConversation(
 
 /**
  * List all conversations (metadata only).
+ * @param includeArchived - Include archived conversations
+ * @param userId - Optional user ID for row-level security
  */
 export async function listConversations(
-  includeArchived: boolean = false
+  includeArchived: boolean = false,
+  userId?: string
 ): Promise<ConversationMetadata[]> {
+  const whereClause: { archived?: boolean; user_id?: string | null } = {};
+
+  if (!includeArchived) {
+    whereClause.archived = false;
+  }
+
+  // Filter by user if userId provided
+  if (userId !== undefined) {
+    whereClause.user_id = userId;
+  }
+
   const conversations = await prisma.conversation.findMany({
-    where: includeArchived ? {} : { archived: false },
+    where: whereClause,
     include: {
       _count: {
         select: { messages: true },
@@ -183,39 +213,61 @@ export async function updateConversationTitle(
 
 /**
  * Archive or unarchive a conversation.
+ * @param conversationId - Conversation ID
+ * @param archived - Whether to archive or unarchive
+ * @param userId - Optional user ID for row-level security
  */
 export async function archiveConversation(
   conversationId: string,
-  archived: boolean = true
-): Promise<void> {
-  await prisma.conversation.update({
-    where: { id: conversationId },
+  archived: boolean = true,
+  userId?: string
+): Promise<boolean> {
+  const whereClause: { id: string; user_id?: string | null } = { id: conversationId };
+  if (userId !== undefined) {
+    whereClause.user_id = userId;
+  }
+
+  const result = await prisma.conversation.updateMany({
+    where: whereClause,
     data: { archived },
   });
+
+  return result.count > 0;
 }
 
 /**
  * Delete a conversation permanently.
+ * @param conversationId - Conversation ID
+ * @param userId - Optional user ID for row-level security
  */
 export async function deleteConversation(
-  conversationId: string
-): Promise<void> {
-  await prisma.conversation.delete({
-    where: { id: conversationId },
+  conversationId: string,
+  userId?: string
+): Promise<boolean> {
+  const whereClause: { id: string; user_id?: string | null } = { id: conversationId };
+  if (userId !== undefined) {
+    whereClause.user_id = userId;
+  }
+
+  const result = await prisma.conversation.deleteMany({
+    where: whereClause,
   });
+
+  return result.count > 0;
 }
 
 /**
  * Calculate overall scores across all conversations.
+ * Uses actual model names from Stage 1 data instead of anonymous labels.
  */
 export async function getOverallScores(): Promise<OverallScores> {
-  // Get all non-archived assistant messages with stage2 data
+  // Get all non-archived assistant messages with stage1 and stage2 data
   const allMessages = await prisma.message.findMany({
     where: {
       role: "assistant",
       conversation: { archived: false },
     },
-    select: { stage2: true },
+    select: { stage1: true, stage2: true },
   });
 
   // Filter to only messages that have stage2 data
@@ -238,9 +290,21 @@ export async function getOverallScores(): Promise<OverallScores> {
   let totalRankings = 0;
 
   for (const msg of messages) {
+    const stage1Data = msg.stage1 as Stage1Result[] | null;
     const stage2Data = msg.stage2 as Stage2Result[] | null;
 
     if (!stage2Data || !Array.isArray(stage2Data)) continue;
+
+    // Build label_to_model mapping from Stage 1 data
+    const labelToModel: Record<string, string> = {};
+    if (stage1Data && Array.isArray(stage1Data)) {
+      const labels = ["A", "B", "C", "D", "E", "F", "G", "H"];
+      stage1Data.forEach((result, index) => {
+        if (index < labels.length) {
+          labelToModel[`Response ${labels[index]}`] = result.model;
+        }
+      });
+    }
 
     totalConversations++;
     const numModels = stage2Data.length;
@@ -254,10 +318,12 @@ export async function getOverallScores(): Promise<OverallScores> {
       // Award points based on position (inverse ranking)
       for (let position = 0; position < parsedRanking.length; position++) {
         const rankedLabel = parsedRanking[position];
+        // Map anonymous label to actual model name, fallback to label if not found
+        const modelName = labelToModel[rankedLabel] || rankedLabel;
         const points = numModels - position;
 
-        if (!modelScores.has(rankedLabel)) {
-          modelScores.set(rankedLabel, {
+        if (!modelScores.has(modelName)) {
+          modelScores.set(modelName, {
             total_points: 0,
             rankings_received: 0,
             first_places: 0,
@@ -267,7 +333,7 @@ export async function getOverallScores(): Promise<OverallScores> {
           });
         }
 
-        const scores = modelScores.get(rankedLabel)!;
+        const scores = modelScores.get(modelName)!;
         scores.total_points += points;
         scores.rankings_received++;
         scores.position_history.push(position + 1);
@@ -278,6 +344,19 @@ export async function getOverallScores(): Promise<OverallScores> {
       }
     }
   }
+
+  // Get all model IDs that have scores
+  const modelIds = Array.from(modelScores.keys());
+
+  // Fetch descriptions from LLMModel table
+  const modelDescriptions = await prisma.lLMModel.findMany({
+    where: { id: { in: modelIds } },
+    select: { id: true, description: true },
+  });
+
+  const descriptionMap = new Map<string, string | null>(
+    modelDescriptions.map((m: { id: string; description: string | null }) => [m.id, m.description])
+  );
 
   // Calculate averages and build leaderboard
   const leaderboard: ModelScore[] = [];
@@ -290,6 +369,7 @@ export async function getOverallScores(): Promise<OverallScores> {
 
       leaderboard.push({
         model,
+        description: descriptionMap.get(model) ?? undefined,
         total_points: scores.total_points,
         rankings_received: scores.rankings_received,
         first_places: scores.first_places,

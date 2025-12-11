@@ -6,13 +6,30 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id             String         @id @default(uuid()) @db.Uuid
+  username       String         @unique
+  email          String         @unique
+  password_hash  String
+  chairman_model String
+  council_models String[]       // Array of up to 4 model IDs
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
+  conversations  Conversation[]
+
+  @@map("users")
+}
+
 model Conversation {
   id         String    @id @default(uuid()) @db.Uuid
+  user_id    String?   @db.Uuid
+  user       User?     @relation(fields: [user_id], references: [id], onDelete: Cascade)
   created_at DateTime  @default(now())
   title      String    @default("New Conversation")
   archived   Boolean   @default(false)
   messages   Message[]
 
+  @@index([user_id])
   @@map("conversations")
 }
 
@@ -28,4 +45,18 @@ model Message {
   timestamp       DateTime     @default(now())
 
   @@map("messages")
+}
+
+model LLMModel {
+  id             String    @id // OpenRouter model ID (e.g., "openai/gpt-4o")
+  name           String
+  description    String?
+  context_length Int?
+  pricing_prompt String?   // Cost per prompt token
+  pricing_completion String? // Cost per completion token
+  is_active      Boolean   @default(true) // Whether model is still available on OpenRouter
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  @@map("llm_models")
 }

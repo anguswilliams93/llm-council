@@ -4,21 +4,82 @@
 
 import { queryModelsParallel, queryModel, type ChatMessage } from "./openrouter";
 import { COUNCIL_MODELS, CHAIRMAN_MODEL, TITLE_MODEL } from "./config";
-import type { Stage1Result, Stage2Result, Stage3Result, CouncilMetadata } from "./types";
+import type { Stage1Result, Stage2Result, Stage3Result, CouncilMetadata, Message } from "./types";
+
+// Re-export ChatMessage for use in other modules
+export type { ChatMessage };
+
+/**
+ * User model configuration override
+ */
+export interface UserModelConfig {
+  chairmanModel: string;
+  councilModels: string[];
+}
+
+/**
+ * Build conversation history from previous messages for context.
+ * Includes user questions and the final synthesis (Stage 3) responses.
+ */
+export function buildConversationHistory(messages: Message[]): ChatMessage[] {
+  const history: ChatMessage[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      history.push({ role: "user", content: msg.content });
+    } else if (msg.role === "assistant" && msg.stage3?.response) {
+      // Include the final synthesis as the assistant's response
+      history.push({ role: "assistant", content: msg.stage3.response });
+    }
+  }
+
+  return history;
+}
+
+/**
+ * Get the effective council models to use.
+ * Uses user's models if provided, otherwise falls back to defaults.
+ */
+function getCouncilModels(userConfig?: UserModelConfig): string[] {
+  if (userConfig?.councilModels && userConfig.councilModels.length > 0) {
+    return userConfig.councilModels;
+  }
+  return COUNCIL_MODELS;
+}
+
+/**
+ * Get the effective chairman model to use.
+ * Uses user's model if provided, otherwise falls back to default.
+ */
+function getChairmanModel(userConfig?: UserModelConfig): string {
+  if (userConfig?.chairmanModel) {
+    return userConfig.chairmanModel;
+  }
+  return CHAIRMAN_MODEL;
+}
 
 /**
  * Stage 1: Collect individual responses from all council models.
  *
  * @param userQuery - The user's question
+ * @param userConfig - Optional user model configuration
+ * @param conversationHistory - Previous messages for context (optional)
  * @returns List of results with 'model' and 'response' keys
  */
 export async function stage1CollectResponses(
-  userQuery: string
+  userQuery: string,
+  userConfig?: UserModelConfig,
+  conversationHistory?: ChatMessage[]
 ): Promise<Stage1Result[]> {
-  const messages: ChatMessage[] = [{ role: "user", content: userQuery }];
+  // Build messages array: history + current query
+  const messages: ChatMessage[] = [
+    ...(conversationHistory || []),
+    { role: "user", content: userQuery }
+  ];
+  const councilModels = getCouncilModels(userConfig);
 
   // Query all models in parallel
-  const responses = await queryModelsParallel(COUNCIL_MODELS, messages);
+  const responses = await queryModelsParallel(councilModels, messages);
 
   // Format results
   const stage1Results: Stage1Result[] = [];
@@ -39,12 +100,15 @@ export async function stage1CollectResponses(
  *
  * @param userQuery - The original user query
  * @param stage1Results - Results from Stage 1
+ * @param userConfig - Optional user model configuration
  * @returns Tuple of [rankings list, label_to_model mapping]
  */
 export async function stage2CollectRankings(
   userQuery: string,
-  stage1Results: Stage1Result[]
+  stage1Results: Stage1Result[],
+  userConfig?: UserModelConfig
 ): Promise<{ rankings: Stage2Result[]; labelToModel: Record<string, string> }> {
+  const councilModels = getCouncilModels(userConfig);
   // Create anonymized labels for responses (Response A, Response B, etc.)
   const labels = stage1Results.map((_, i) => String.fromCharCode(65 + i)); // A, B, C, ...
 
@@ -96,7 +160,7 @@ Now provide your evaluation and ranking:`;
   const messages: ChatMessage[] = [{ role: "user", content: rankingPrompt }];
 
   // Get rankings from all council models in parallel
-  const responses = await queryModelsParallel(COUNCIL_MODELS, messages);
+  const responses = await queryModelsParallel(councilModels, messages);
 
   // Format results
   const stage2Results: Stage2Result[] = [];
@@ -121,13 +185,18 @@ Now provide your evaluation and ranking:`;
  * @param userQuery - The original user query
  * @param stage1Results - Individual model responses from Stage 1
  * @param stage2Results - Rankings from Stage 2
+ * @param userConfig - Optional user model configuration
+ * @param conversationHistory - Previous messages for context (optional)
  * @returns Result with 'model' and 'response' keys
  */
 export async function stage3SynthesizeFinal(
   userQuery: string,
   stage1Results: Stage1Result[],
-  stage2Results: Stage2Result[]
+  stage2Results: Stage2Result[],
+  userConfig?: UserModelConfig,
+  conversationHistory?: ChatMessage[]
 ): Promise<Stage3Result> {
+  const chairmanModel = getChairmanModel(userConfig);
   // Build comprehensive context for chairman
   const stage1Text = stage1Results
     .map((result) => `Model: ${result.model}\nResponse: ${result.response}`)
@@ -137,8 +206,14 @@ export async function stage3SynthesizeFinal(
     .map((result) => `Model: ${result.model}\nRanking: ${result.ranking}`)
     .join("\n\n");
 
-  const chairmanPrompt = `You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+  // Build conversation history context if available
+  const historyContext = conversationHistory && conversationHistory.length > 0
+    ? `\nCONVERSATION HISTORY (for context on follow-up questions):
+${conversationHistory.map((msg, i) => `${msg.role === 'user' ? 'User' : 'Council'}: ${msg.content}`).join('\n\n')}\n\n`
+    : '';
 
+  const chairmanPrompt = `You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+${historyContext}
 Original Question: ${userQuery}
 
 STAGE 1 - Individual Responses:
@@ -157,18 +232,18 @@ Provide a clear, well-reasoned final answer that represents the council's collec
   const messages: ChatMessage[] = [{ role: "user", content: chairmanPrompt }];
 
   // Query the chairman model
-  const response = await queryModel(CHAIRMAN_MODEL, messages);
+  const response = await queryModel(chairmanModel, messages);
 
   if (response === null) {
     // Fallback if chairman fails
     return {
-      model: CHAIRMAN_MODEL,
+      model: chairmanModel,
       response: "Error: Unable to generate final synthesis.",
     };
   }
 
   return {
-    model: CHAIRMAN_MODEL,
+    model: chairmanModel,
     response: response.content || "",
   };
 }
@@ -298,16 +373,22 @@ Title:`;
  * Run the complete 3-stage council process.
  *
  * @param userQuery - The user's question
+ * @param userConfig - Optional user model configuration
+ * @param conversationHistory - Previous messages for context (optional)
  * @returns Object with stage1, stage2, stage3 results and metadata
  */
-export async function runFullCouncil(userQuery: string): Promise<{
+export async function runFullCouncil(
+  userQuery: string,
+  userConfig?: UserModelConfig,
+  conversationHistory?: ChatMessage[]
+): Promise<{
   stage1: Stage1Result[];
   stage2: Stage2Result[];
   stage3: Stage3Result;
   metadata: CouncilMetadata;
 }> {
-  // Stage 1: Collect individual responses
-  const stage1Results = await stage1CollectResponses(userQuery);
+  // Stage 1: Collect individual responses (with history for context)
+  const stage1Results = await stage1CollectResponses(userQuery, userConfig, conversationHistory);
 
   // If no models responded successfully, return error
   if (stage1Results.length === 0) {
@@ -328,17 +409,20 @@ export async function runFullCouncil(userQuery: string): Promise<{
   // Stage 2: Collect rankings
   const { rankings: stage2Results, labelToModel } = await stage2CollectRankings(
     userQuery,
-    stage1Results
+    stage1Results,
+    userConfig
   );
 
   // Calculate aggregate rankings
   const aggregateRankings = calculateAggregateRankings(stage2Results, labelToModel);
 
-  // Stage 3: Synthesize final answer
+  // Stage 3: Synthesize final answer (with history for context)
   const stage3Result = await stage3SynthesizeFinal(
     userQuery,
     stage1Results,
-    stage2Results
+    stage2Results,
+    userConfig,
+    conversationHistory
   );
 
   return {

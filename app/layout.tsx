@@ -16,6 +16,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "parLLMent - LLM Council",
   description: "A 3-stage deliberation system where multiple LLMs collaboratively answer questions through anonymized peer review",
+  icons: {
+    icon: "/council-logo.svg",
+    shortcut: "/council-logo.svg",
+    apple: "/council-logo.svg",
+  },
 };
 
 export default function RootLayout({

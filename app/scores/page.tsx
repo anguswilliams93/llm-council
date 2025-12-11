@@ -198,7 +198,15 @@ function LeaderboardRow({
           <span className={`font-bold text-lg ${isTopThree ? style.text : ""}`}>
             {getModelShortName(score.model)}
           </span>
+          <span className="text-xs text-muted-foreground font-mono">
+            {score.model}
+          </span>
         </div>
+        {score.description && (
+          <p className="text-xs text-muted-foreground mb-1 line-clamp-2">
+            {score.description}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
           <span className="flex items-center gap-1">
             <Hash className="h-3 w-3" />

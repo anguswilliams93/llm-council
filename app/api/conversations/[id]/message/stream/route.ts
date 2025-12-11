@@ -16,6 +16,8 @@ import {
   stage3SynthesizeFinal,
   calculateAggregateRankings,
   generateConversationTitle,
+  buildConversationHistory,
+  type UserModelConfig,
 } from "@/lib/council";
 import type { Stage1Result, Stage2Result, Stage3Result } from "@/lib/types";
 
@@ -27,6 +29,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const { id } = await params;
   const body = await request.json();
   const content = body.content;
+
+  // Optional user model configuration
+  const userConfig: UserModelConfig | undefined = body.userConfig;
 
   if (!content || typeof content !== "string") {
     return new Response(JSON.stringify({ error: "Message content is required" }), {
@@ -46,6 +51,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const isFirstMessage = conversation.messages.length === 0;
 
+  // Build conversation history from previous messages for context
+  const conversationHistory = buildConversationHistory(conversation.messages);
+
   // Create a readable stream for SSE
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -64,16 +72,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           titlePromise = generateConversationTitle(content);
         }
 
-        // Stage 1: Collect responses
+        // Stage 1: Collect responses (with conversation history for context)
         sendEvent({ type: "stage1_start" });
-        const stage1Results: Stage1Result[] = await stage1CollectResponses(content);
+        const stage1Results: Stage1Result[] = await stage1CollectResponses(
+          content,
+          userConfig,
+          conversationHistory
+        );
         sendEvent({ type: "stage1_complete", data: stage1Results });
 
-        // Stage 2: Collect rankings
+        // Stage 2: Collect rankings (using user's council models if provided)
         sendEvent({ type: "stage2_start" });
         const { rankings: stage2Results, labelToModel } = await stage2CollectRankings(
           content,
-          stage1Results
+          stage1Results,
+          userConfig
         );
         const aggregateRankings = calculateAggregateRankings(stage2Results, labelToModel);
         sendEvent({
@@ -85,12 +98,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           },
         });
 
-        // Stage 3: Synthesize final answer
+        // Stage 3: Synthesize final answer (with conversation history for context)
         sendEvent({ type: "stage3_start" });
         const stage3Result: Stage3Result = await stage3SynthesizeFinal(
           content,
           stage1Results,
-          stage2Results
+          stage2Results,
+          userConfig,
+          conversationHistory
         );
         sendEvent({ type: "stage3_complete", data: stage3Result });
 

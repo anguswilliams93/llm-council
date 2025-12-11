@@ -5,7 +5,10 @@ import { motion, AnimatePresence } from "motion/react";
 import { Bot, User, Check, ChevronDown, ChevronUp, Trophy, Copy, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import rehypeRaw from "rehype-raw";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -19,6 +22,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { CouncilSpinner } from "@/components/council-spinner";
 import * as api from "@/lib/api";
 
 import type {
@@ -30,6 +34,56 @@ import type {
   Conversation,
 } from "@/lib/types";
 
+// Typewriter effect component for Stage 3 synthesis
+interface TypewriterTextProps {
+  text: string;
+  speed?: number; // ms per character
+  onComplete?: () => void;
+}
+
+function TypewriterText({ text, speed = 5, onComplete }: TypewriterTextProps) {
+  const [displayedText, setDisplayedText] = React.useState("");
+  const [isComplete, setIsComplete] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!text) return;
+
+    setDisplayedText("");
+    setIsComplete(false);
+    let currentIndex = 0;
+
+    const interval = setInterval(() => {
+      if (currentIndex < text.length) {
+        setDisplayedText(text.slice(0, currentIndex + 1));
+        currentIndex++;
+      } else {
+        clearInterval(interval);
+        setIsComplete(true);
+        onComplete?.();
+      }
+    }, speed);
+
+    return () => clearInterval(interval);
+  }, [text, speed, onComplete]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.2 }}
+    >
+      <MarkdownContent>{displayedText}</MarkdownContent>
+      {!isComplete && (
+        <motion.span
+          className="inline-block w-2 h-4 bg-green-500 ml-0.5"
+          animate={{ opacity: [1, 0] }}
+          transition={{ duration: 0.5, repeat: Infinity, repeatType: "reverse" }}
+        />
+      )}
+    </motion.div>
+  );
+}
+
 // Markdown component with proper plugins
 interface MarkdownContentProps {
   children: string;
@@ -38,8 +92,8 @@ interface MarkdownContentProps {
 function MarkdownContent({ children }: MarkdownContentProps) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw]}
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeRaw, rehypeKatex]}
       components={{
         // Style tables properly
         table: ({ children }) => (
@@ -181,22 +235,10 @@ function Stage1Panel({ results, isLoading }: Stage1PanelProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-          <span className="text-sm text-muted-foreground">
-            Collecting responses from council models...
-          </span>
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          {[1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="h-8 rounded-md bg-muted animate-pulse"
-              style={{ animationDelay: `${i * 100}ms` }}
-            />
-          ))}
-        </div>
+      <div className="py-2">
+        <span className="text-sm text-muted-foreground">
+          Collecting responses from council models...
+        </span>
       </div>
     );
   }
@@ -482,13 +524,8 @@ function Stage2Panel({ results, metadata, isLoading }: Stage2PanelProps) {
 
   if (isLoading) {
     return (
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-primary animate-ping" />
-          <span className="text-sm font-medium text-muted-foreground">Ranking responses</span>
-        </div>
-        <Progress value={66} className="w-full h-2" />
-        <span className="text-xs text-center text-muted-foreground block">66% complete</span>
+      <div className="p-4">
+        <span className="text-sm font-medium text-muted-foreground">Waiting for ranking results...</span>
       </div>
     );
   }
@@ -573,18 +610,48 @@ function Stage2Panel({ results, metadata, isLoading }: Stage2PanelProps) {
 interface Stage3PanelProps {
   result?: Stage3Result;
   isLoading?: boolean;
+  isNewResponse?: boolean; // Whether this is a newly streamed response (show typewriter)
 }
 
-function Stage3Panel({ result, isLoading }: Stage3PanelProps) {
+function Stage3Panel({ result, isLoading, isNewResponse = false }: Stage3PanelProps) {
+  const [hasPlayedTypewriter, setHasPlayedTypewriter] = React.useState(!isNewResponse);
+  const [copied, setCopied] = React.useState(false);
+
+  // Reset typewriter state when result changes and it's a new response
+  React.useEffect(() => {
+    if (isNewResponse && result) {
+      setHasPlayedTypewriter(false);
+    }
+  }, [result?.response, isNewResponse]);
+
+  const handleCopy = async () => {
+    if (!result?.response) return;
+    try {
+      await navigator.clipboard.writeText(result.response);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!result?.response) return;
+    const blob = new Blob([result.response], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "synthesis.md";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   if (isLoading) {
     return (
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-green-500 animate-ping" />
-          <span className="text-sm font-medium text-muted-foreground">Synthesizing final answer</span>
-        </div>
-        <Progress value={99} className="w-full h-2" />
-        <span className="text-xs text-center text-muted-foreground block">99% complete</span>
+      <div className="p-4">
+        <span className="text-sm font-medium text-muted-foreground">Waiting for synthesis...</span>
       </div>
     );
   }
@@ -599,16 +666,50 @@ function Stage3Panel({ result, isLoading }: Stage3PanelProps) {
     >
       <Card className="border-green-500/30 bg-green-50/50 dark:bg-green-950/20">
         <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <div className="h-3 w-3 rounded-full bg-green-500" />
-            <CardTitle className="text-sm">
-              Final Synthesis
-            </CardTitle>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-3 rounded-full bg-green-500" />
+              <CardTitle className="text-sm">
+                Final Synthesis
+              </CardTitle>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleCopy}
+                title="Copy to clipboard"
+              >
+                {copied ? (
+                  <Check className="h-3.5 w-3.5 text-green-500" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleDownload}
+                title="Download as Markdown"
+              >
+                <Download className="h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <div className="text-sm">
-            <MarkdownContent>{result.response}</MarkdownContent>
+            {!hasPlayedTypewriter && isNewResponse ? (
+              <TypewriterText
+                text={result.response}
+                speed={10}
+                onComplete={() => setHasPlayedTypewriter(true)}
+              />
+            ) : (
+              <MarkdownContent>{result.response}</MarkdownContent>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -646,6 +747,9 @@ export function MessageBubble({
   // Track if we were previously streaming (to detect when streaming completes)
   const wasStreamingRef = React.useRef(isStreaming);
 
+  // Track if this is a newly streamed response (for typewriter effect)
+  const [isNewResponse, setIsNewResponse] = React.useState(isStreaming);
+
   // Start on stage1 when loading, otherwise show the most advanced completed stage
   const getInitialStage = () => {
     if (isStreaming) return "stage1";
@@ -656,15 +760,75 @@ export function MessageBubble({
 
   const [activeStage, setActiveStage] = React.useState(getInitialStage);
 
-  // Calculate progress and status
-  const progressValue = isStreaming || stage3Loading
-    ? (stage3Loading ? 100 : stage2Loading ? 66 : stage1Loading ? 33 : 0)
-    : (hasStage3 ? 100 : hasStage2 ? 66 : hasStage1 ? 33 : 0);
+  // Smooth progress animation
+  const [smoothProgress, setSmoothProgress] = React.useState(0);
+  const [statusMessageIndex, setStatusMessageIndex] = React.useState(0);
+
+  // Target progress values for each stage
+  const targetProgress = isStreaming
+    ? (stage3Loading ? 95 : stage2Loading ? 60 : stage1Loading ? 25 : 0)
+    : (hasStage3 ? 100 : hasStage2 ? 65 : hasStage1 ? 30 : 0);
+
+  // Smooth progress animation effect
+  React.useEffect(() => {
+    if (!isStreaming) {
+      setSmoothProgress(targetProgress);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setSmoothProgress((prev) => {
+        const diff = targetProgress - prev;
+        if (Math.abs(diff) < 0.5) return targetProgress;
+        // Ease towards target with small random variation for organic feel
+        const step = diff * 0.08 + (Math.random() * 0.5);
+        return Math.min(prev + step, targetProgress);
+      });
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [targetProgress, isStreaming]);
+
+  // Rotating status messages for each stage
+  const stage1Messages = [
+    "Collecting independent responses from council models...",
+    "Reducing hallucinations through diverse perspectives...",
+    "Analyzing token efficiency across models...",
+    "Gathering expert opinions from the council...",
+    "Processing parallel model queries...",
+  ];
+
+  const stage2Messages = [
+    "Council models anonymously ranking each other's responses...",
+    "Evaluating response quality and accuracy...",
+    "Cross-validating factual consistency...",
+    "Identifying strongest arguments and evidence...",
+    "Computing aggregate consensus rankings...",
+  ];
+
+  const stage3Messages = [
+    "Synthesizing final answer from top-ranked responses...",
+    "Merging best insights into cohesive response...",
+    "Ensuring factual accuracy in synthesis...",
+    "Formatting final output with proper structure...",
+    "Finalizing council deliberation...",
+  ];
+
+  // Rotate status messages during streaming
+  React.useEffect(() => {
+    if (!isStreaming) return;
+
+    const interval = setInterval(() => {
+      setStatusMessageIndex((prev) => prev + 1);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [isStreaming]);
 
   const getStatusText = () => {
-    if (stage3Loading) return "Synthesizing final answer from top-ranked responses...";
-    if (stage2Loading) return "Council models anonymously ranking each other's responses...";
-    if (stage1Loading) return "Collecting independent responses from council models...";
+    if (stage3Loading) return stage3Messages[statusMessageIndex % stage3Messages.length];
+    if (stage2Loading) return stage2Messages[statusMessageIndex % stage2Messages.length];
+    if (stage1Loading) return stage1Messages[statusMessageIndex % stage1Messages.length];
     if (hasStage3) return "Council deliberation complete";
     if (hasStage2) return "Rankings complete, final synthesis in progress";
     if (hasStage1) return "Individual responses collected, rankings in progress";
@@ -785,28 +949,32 @@ export function MessageBubble({
           {/* Progress Bar and Status Text */}
           {!isUser && isStreaming && (
             <div className="mb-6 space-y-3">
-              {/* Progress Bar */}
-              <div className="space-y-2">
-                <div className="h-2 bg-muted rounded-full">
-                  <div
-                    className="h-2 rounded-full"
-                    style={{ width: `${progressValue}%`, backgroundColor: 'var(--radix-colors-primary-500)' }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>{Math.round(progressValue)}%</span>
-                  <span>{getStatusText()}</span>
+              {/* Council Spinner and Progress */}
+              <div className="flex items-center gap-4">
+                <CouncilSpinner size={48} />
+                <div className="flex-1 space-y-2">
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-2 rounded-full bg-primary"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${smoothProgress}%` }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>{Math.round(smoothProgress)}%</span>
+                    <motion.span
+                      key={getStatusText()}
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      {getStatusText()}
+                    </motion.span>
+                  </div>
                 </div>
               </div>
-
-              {/* Quick Stage Summary */}
-              {/* <div className="flex items-center gap-4 text-xs text-muted-foreground px-3 py-2 bg-muted/50 rounded-lg">
-                <span>📝 {hasStage1 ? `Responses (${message.stage1?.length || 0})` : 'Collecting...'}</span>
-                <div className="w-6 h-px bg-border" />
-                <span>🏆 {hasStage2 ? `Rankings (${message.stage2?.length || 0})` : 'Ranking...'}</span>
-                <div className="w-6 h-px bg-border" />
-                <span>🎯 {hasStage3 ? 'Complete' : 'Synthesizing...'}</span>
-              </div> */}
             </div>
           )}
 
@@ -884,6 +1052,7 @@ export function MessageBubble({
                 <Stage3Panel
                   result={"stage3" in message ? message.stage3 : undefined}
                   isLoading={stage3Loading}
+                  isNewResponse={isNewResponse}
                 />
               </motion.div>
             )}

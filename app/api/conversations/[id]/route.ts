@@ -14,7 +14,11 @@ interface RouteParams {
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const conversation = await getConversation(id);
+    const searchParams = request.nextUrl.searchParams;
+    const userId = searchParams.get("userId") || undefined;
+
+    // Pass userId for row-level security
+    const conversation = await getConversation(id, userId);
 
     if (!conversation) {
       return NextResponse.json(
@@ -36,16 +40,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const conversation = await getConversation(id);
+    const searchParams = request.nextUrl.searchParams;
+    const userId = searchParams.get("userId") || undefined;
 
-    if (!conversation) {
+    // Pass userId for row-level security - deleteConversation returns success status
+    const deleted = await deleteConversation(id, userId);
+
+    if (!deleted) {
       return NextResponse.json(
-        { error: "Conversation not found" },
+        { error: "Conversation not found or access denied" },
         { status: 404 }
       );
     }
 
-    await deleteConversation(id);
     return NextResponse.json({ status: "ok" });
   } catch (error) {
     console.error("Error deleting conversation:", error);
